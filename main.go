@@ -2,8 +2,8 @@ package main
 
 import (
 	"embed"
-	"github.com/getlantern/systray"
-	"github.com/getlantern/systray/example/icon"
+	"github.com/energye/systray"
+	"github.com/energye/systray/icon"
 	"log"
 	"net/http"
 	"wails-playground/internal/myapp"
@@ -62,8 +62,7 @@ func onReady() {
 	systray.SetTooltip("Pretty awesome")
 	mQuit := systray.AddMenuItem("Quit", "Quit the whole app")
 	systray.AddSeparator()
-	item := systray.AddMenuItemCheckbox("test", "tooltip her", true)
-	item.Uncheck()
+	systray.AddMenuItemCheckbox("test", "tooltip her", true)
 	// Sets the icon of a menu item. Only available on Mac and Windows.
 	mQuit.SetIcon(icon.Data)
 }
