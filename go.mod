@@ -3,7 +3,7 @@ module wails-playground
 go 1.20
 
 require (
-	fyne.io/systray v1.11.0
+	fyne.io/systray v1.11.1-0.20240701075416-6539193433ff
 	github.com/wailsapp/wails/v2 v2.9.1
 )
 
