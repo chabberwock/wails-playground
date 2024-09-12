@@ -1,5 +1,4 @@
 //go:build windows
-// +build windows
 
 package systray
 
@@ -13,10 +12,10 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
-	"github.com/tevino/abool"
 	"golang.org/x/sys/windows"
 )
 
@@ -41,6 +40,8 @@ var (
 	pCreatePopupMenu       = u32.NewProc("CreatePopupMenu")
 	pCreateWindowEx        = u32.NewProc("CreateWindowExW")
 	pDefWindowProc         = u32.NewProc("DefWindowProcW")
+	pDeleteMenu            = u32.NewProc("DeleteMenu")
+	pDestroyMenu           = u32.NewProc("DestroyMenu")
 	pRemoveMenu            = u32.NewProc("RemoveMenu")
 	pDestroyWindow         = u32.NewProc("DestroyWindow")
 	pDispatchMessage       = u32.NewProc("DispatchMessageW")
@@ -235,16 +236,12 @@ type winTray struct {
 	wmSystrayMessage,
 	wmTaskbarCreated uint32
 
-	initialized *abool.AtomicBool
-
-	onClick  func(menu IMenu)
-	onDClick func(menu IMenu)
-	onRClick func(menu IMenu)
+	initialized atomic.Bool
 }
 
 // isReady checks if the tray as already been initialized. It is not goroutine safe with in regard to the initialization function, but prevents a panic when functions are called too early.
 func (t *winTray) isReady() bool {
-	return t.initialized.IsSet()
+	return t.initialized.Load()
 }
 
 // Loads an image from file and shows it in tray.
@@ -292,33 +289,18 @@ func (t *winTray) setTooltip(src string) error {
 	return t.nid.modify()
 }
 
-var wt = winTray{
-	initialized: abool.New(),
-}
-
-func (t *winTray) setOnClick(fn func(menu IMenu)) {
-	t.onClick = fn
-}
-
-func (t *winTray) setOnDClick(fn func(menu IMenu)) {
-	t.onDClick = fn
-}
-
-func (t *winTray) setOnRClick(fn func(menu IMenu)) {
-	t.onRClick = fn
-}
+var wt = winTray{}
 
 // WindowProc callback function that processes messages sent to a window.
 // https://msdn.microsoft.com/en-us/library/windows/desktop/ms633573(v=vs.85).aspx
 func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam uintptr) (lResult uintptr) {
 	const (
-		WM_RBUTTONUP     = 0x0205
-		WM_LBUTTONUP     = 0x0202
-		WM_LBUTTONDBLCLK = 0x0203
-		WM_COMMAND       = 0x0111
-		WM_ENDSESSION    = 0x0016
-		WM_CLOSE         = 0x0010
-		WM_DESTROY       = 0x0002
+		WM_RBUTTONUP  = 0x0205
+		WM_LBUTTONUP  = 0x0202
+		WM_COMMAND    = 0x0111
+		WM_ENDSESSION = 0x0016
+		WM_CLOSE      = 0x0010
+		WM_DESTROY    = 0x0002
 	)
 	switch message {
 	case WM_COMMAND:
@@ -340,23 +322,11 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 			t.nid.delete()
 		}
 		t.muNID.Unlock()
-		systrayExit()
+		runSystrayExit()
 	case t.wmSystrayMessage:
 		switch lParam {
-		case WM_RBUTTONUP:
-			if t.onRClick != nil {
-				t.onRClick(t)
-			} else {
-				t.ShowMenu()
-			}
-		case WM_LBUTTONUP:
-			if t.onClick != nil {
-				t.onClick(t)
-			}
-		case WM_LBUTTONDBLCLK:
-			if t.onDClick != nil {
-				t.onDClick(t)
-			}
+		case WM_RBUTTONUP, WM_LBUTTONUP:
+			t.showMenu()
 		}
 	case t.wmTaskbarCreated: // on explorer.exe restarts
 		t.muNID.Lock()
@@ -702,6 +672,30 @@ func (t *winTray) addSeparatorMenuItem(menuItemId, parentId uint32) error {
 	return nil
 }
 
+func (t *winTray) removeMenuItem(menuItemId, parentId uint32) error {
+	if !wt.isReady() {
+		return ErrTrayNotReadyYet
+	}
+
+	const MF_BYCOMMAND = 0x00000000
+	const ERROR_SUCCESS syscall.Errno = 0
+
+	t.muMenus.RLock()
+	menu := uintptr(t.menus[parentId])
+	t.muMenus.RUnlock()
+	res, _, err := pDeleteMenu.Call(
+		menu,
+		uintptr(menuItemId),
+		MF_BYCOMMAND,
+	)
+	if res == 0 && err.(syscall.Errno) != ERROR_SUCCESS {
+		return err
+	}
+	t.delFromVisibleItems(parentId, menuItemId)
+
+	return nil
+}
+
 func (t *winTray) hideMenuItem(menuItemId, parentId uint32) error {
 	if !wt.isReady() {
 		return ErrTrayNotReadyYet
@@ -726,7 +720,7 @@ func (t *winTray) hideMenuItem(menuItemId, parentId uint32) error {
 	return nil
 }
 
-func (t *winTray) ShowMenu() error {
+func (t *winTray) showMenu() error {
 	if !wt.isReady() {
 		return ErrTrayNotReadyYet
 	}
@@ -898,10 +892,8 @@ func registerSystray() {
 		return
 	}
 
-	wt.initialized.Set()
-	if systrayReady != nil {
-		systrayReady()
-	}
+	wt.initialized.Store(true)
+	systrayReady()
 }
 
 var m = &struct {
@@ -957,6 +949,13 @@ func quit() {
 		0,
 		0,
 	)
+
+	wt.muNID.Lock()
+	if wt.nid != nil {
+		wt.nid.delete()
+	}
+	wt.muNID.Unlock()
+	runSystrayExit()
 }
 
 func setInternalLoop(bool) {
@@ -1058,18 +1057,6 @@ func addOrUpdateMenuItem(item *MenuItem) {
 	}
 }
 
-func setOnClick(fn func(menu IMenu)) {
-	wt.setOnClick(fn)
-}
-
-func setOnDClick(fn func(menu IMenu)) {
-	wt.setOnDClick(fn)
-}
-
-func setOnRClick(fn func(menu IMenu)) {
-	wt.setOnRClick(fn)
-}
-
 // SetTemplateIcon sets the icon of a menu item as a template icon (on macOS). On Windows, it
 // falls back to the regular icon bytes and on Linux it does nothing.
 // templateIconBytes and regularIconBytes should be the content of .ico for windows and
@@ -1078,8 +1065,8 @@ func (item *MenuItem) SetTemplateIcon(templateIconBytes []byte, regularIconBytes
 	item.SetIcon(regularIconBytes)
 }
 
-func addSeparator(id uint32) {
-	err := wt.addSeparatorMenuItem(id, 0)
+func addSeparator(id uint32, parent uint32) {
+	err := wt.addSeparatorMenuItem(id, parent)
 	if err != nil {
 		log.Printf("systray error: unable to addSeparator: %s\n", err)
 		return
@@ -1094,10 +1081,23 @@ func hideMenuItem(item *MenuItem) {
 	}
 }
 
+func removeMenuItem(item *MenuItem) {
+	err := wt.removeMenuItem(uint32(item.id), item.parentId())
+	if err != nil {
+		log.Printf("systray error: unable to removeMenuItem: %s\n", err)
+		return
+	}
+}
+
 func showMenuItem(item *MenuItem) {
 	addOrUpdateMenuItem(item)
 }
 
 func resetMenu() {
+	_, _, _ = pDestroyMenu.Call(uintptr(wt.menus[0]))
+	wt.visibleItems = make(map[uint32][]uint32)
+	wt.menus = make(map[uint32]windows.Handle)
+	wt.menuOf = make(map[uint32]windows.Handle)
+	wt.menuItemIcons = make(map[uint32]windows.Handle)
 	wt.createMenu()
 }

@@ -1,5 +1,4 @@
-//go:build linux || freebsd || openbsd || netbsd
-// +build linux freebsd openbsd netbsd
+//go:build (linux || freebsd || openbsd || netbsd) && !android
 
 //Note that you need to have github.com/knightpp/dbus-codegen-go installed from "custom" branch
 //go:generate dbus-codegen-go -prefix org.kde -package notifier -output internal/generated/notifier/status_notifier_item.go internal/StatusNotifierItem.xml
@@ -15,14 +14,13 @@ import (
 	"log"
 	"os"
 	"sync"
-	"time"
 
+	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
 	"github.com/godbus/dbus/v5/prop"
 
-	"github.com/energye/systray/internal/generated/menu"
-	"github.com/energye/systray/internal/generated/notifier"
-	dbus "github.com/godbus/dbus/v5"
+	"fyne.io/systray/internal/generated/menu"
+	"fyne.io/systray/internal/generated/notifier"
 )
 
 const (
@@ -61,8 +59,8 @@ func SetIcon(iconBytes []byte) {
 		return
 	}
 
-	props.SetMust("org.kde.StatusNotifierItem", "IconPixmap", []PX{convertToPixels(iconBytes)})
-
+	props.SetMust("org.kde.StatusNotifierItem", "IconPixmap",
+		[]PX{convertToPixels(iconBytes)})
 	if conn == nil {
 		return
 	}
@@ -151,7 +149,7 @@ func nativeLoop() int {
 }
 
 func nativeEnd() {
-	systrayExit()
+	runSystrayExit()
 	instance.conn.Close()
 }
 
@@ -159,99 +157,21 @@ func quit() {
 	close(quitChan)
 }
 
-var usni = &UnimplementedStatusNotifierItem{}
-
-type UnimplementedStatusNotifierItem struct {
-	contextMenu       func(x int32, y int32)
-	activate          func(x int32, y int32)
-	dActivate         func(x int32, y int32)
-	secondaryActivate func(x int32, y int32)
-	scroll            func(delta int32, orientation string)
-	dActivateTime     int64
-}
-
-func (*UnimplementedStatusNotifierItem) iface() string {
-	return notifier.InterfaceStatusNotifierItem
-}
-
-func (m *UnimplementedStatusNotifierItem) ContextMenu(x int32, y int32) (err *dbus.Error) {
-	if m.contextMenu != nil {
-		m.contextMenu(x, y)
-	} else {
-		err = &dbus.ErrMsgUnknownMethod
-	}
-	return
-}
-
-func (m *UnimplementedStatusNotifierItem) Activate(x int32, y int32) (err *dbus.Error) {
-	if m.dActivateTime == 0 {
-		m.dActivateTime = time.Now().UnixMilli()
-	} else {
-		nowMilli := time.Now().UnixMilli()
-		if nowMilli-m.dActivateTime < dClickTimeMinInterval {
-			m.dActivateTime = dClickTimeMinInterval
-			if m.dActivate != nil {
-				m.dActivate(x, y)
-				return
-			}
-		} else {
-			m.dActivateTime = nowMilli
-		}
-	}
-
-	if m.activate != nil {
-		m.activate(x, y)
-	} else {
-		err = &dbus.ErrMsgUnknownMethod
-	}
-	return
-}
-
-func (m *UnimplementedStatusNotifierItem) SecondaryActivate(x int32, y int32) (err *dbus.Error) {
-	if m.secondaryActivate != nil {
-		m.secondaryActivate(x, y)
-	} else {
-		err = &dbus.ErrMsgUnknownMethod
-	}
-	return
-}
-
-func (m *UnimplementedStatusNotifierItem) Scroll(delta int32, orientation string) (err *dbus.Error) {
-	if m.scroll != nil {
-		m.scroll(delta, orientation)
-	} else {
-		err = &dbus.ErrMsgUnknownMethod
-	}
-	return
-}
-
-func setOnClick(fn func(menu IMenu)) {
-	usni.activate = func(x int32, y int32) {
-		fn(nil)
-	}
-}
-
-func setOnDClick(fn func(menu IMenu)) {
-	usni.dActivate = func(x int32, y int32) {
-		fn(nil)
-	}
-}
-
-func setOnRClick(dClick func(IMenu)) {
-}
-
 func nativeStart() {
-	if systrayReady != nil {
-		systrayReady()
-	}
-	conn, _ := dbus.ConnectSessionBus()
-	err := notifier.ExportStatusNotifierItem(conn, path, usni)
+	systrayReady()
+	conn, err := dbus.SessionBus()
 	if err != nil {
-		log.Printf("systray error: failed to export status notifier item: %s\n", err)
+		log.Printf("systray error: failed to connect to DBus: %v\n", err)
+		return
+	}
+	err = notifier.ExportStatusNotifierItem(conn, path, &notifier.UnimplementedStatusNotifierItem{})
+	if err != nil {
+		log.Printf("systray error: failed to export status notifier item: %v\n", err)
 	}
 	err = menu.ExportDbusmenu(conn, menuPath, instance)
 	if err != nil {
-		log.Printf("systray error: failed to export status notifier item: %s\n", err)
+		log.Printf("systray error: failed to export status notifier menu: %v\n", err)
+		return
 	}
 
 	name := fmt.Sprintf("org.kde.StatusNotifierItem-%d-1", os.Getpid()) // register id 1 for this process
@@ -285,7 +205,6 @@ func nativeStart() {
 		log.Printf("systray error: failed to export node introspection: %s\n", err)
 		return
 	}
-
 	menuNode := introspect.Node{
 		Name: menuPath,
 		Interfaces: []introspect.Interface{
@@ -307,14 +226,57 @@ func nativeStart() {
 	instance.menuProps = menuProps
 	instance.lock.Unlock()
 
-	var (
-		obj  dbus.BusObject
-		call *dbus.Call
-	)
-	obj = conn.Object("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher")
-	call = obj.Call("org.kde.StatusNotifierWatcher.RegisterStatusNotifierItem", 0, path)
+	go stayRegistered()
+}
+
+func register() bool {
+	obj := instance.conn.Object("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher")
+	call := obj.Call("org.kde.StatusNotifierWatcher.RegisterStatusNotifierItem", 0, path)
 	if call.Err != nil {
-		log.Printf("systray error: failed to register our icon with the notifier watcher (maybe no tray is running?): %s\n", call.Err)
+		log.Printf("systray error: failed to register: %v\n", call.Err)
+		return false
+	}
+
+	return true
+}
+
+func stayRegistered() {
+	register()
+
+	conn := instance.conn
+	if err := conn.AddMatchSignal(
+		dbus.WithMatchObjectPath("/org/freedesktop/DBus"),
+		dbus.WithMatchInterface("org.freedesktop.DBus"),
+		dbus.WithMatchSender("org.freedesktop.DBus"),
+		dbus.WithMatchMember("NameOwnerChanged"),
+		dbus.WithMatchArg(0, "org.kde.StatusNotifierWatcher"),
+	); err != nil {
+		log.Printf("systray error: failed to register signal matching: %v\n", err)
+		// If we can't monitor signals, there is no point in
+		// us being here. we're either registered or not (per
+		// above) and will roll the dice from here...
+		return
+	}
+
+	sc := make(chan *dbus.Signal, 10)
+	conn.Signal(sc)
+
+	for {
+		select {
+		case sig := <-sc:
+			if sig == nil {
+				return // We get a nil signal when closing the window.
+			} else if len(sig.Body) < 3 {
+				return // malformed signal?
+			}
+
+			// sig.Body has the args, which are [name old_owner new_owner]
+			if s, ok := sig.Body[2].(string); ok && s != "" {
+				register()
+			}
+		case <-quitChan:
+			return
+		}
 	}
 }
 
@@ -335,13 +297,13 @@ type tray struct {
 	menuVersion      uint32
 }
 
-func (*tray) iface() string {
-	return notifier.InterfaceStatusNotifierItem
-}
-
 func (t *tray) createPropSpec() map[string]map[string]*prop.Prop {
 	t.lock.Lock()
-	t.lock.Unlock()
+	defer t.lock.Unlock()
+	id := t.title
+	if id == "" {
+		id = fmt.Sprintf("systray_%d", os.Getpid())
+	}
 	return map[string]map[string]*prop.Prop{
 		"org.kde.StatusNotifierItem": {
 			"Status": {
@@ -357,7 +319,7 @@ func (t *tray) createPropSpec() map[string]map[string]*prop.Prop {
 				Callback: nil,
 			},
 			"Id": {
-				Value:    "1",
+				Value:    id,
 				Writable: false,
 				Emit:     prop.EmitTrue,
 				Callback: nil,

@@ -10,29 +10,34 @@ import (
 )
 
 var (
-	systrayReady  func()
-	systrayExit   func()
-	menuItems     = make(map[uint32]*MenuItem)
-	menuItemsLock sync.RWMutex
+	systrayReady      func()
+	systrayExit       func()
+	systrayExitCalled bool
+	menuItems         = make(map[uint32]*MenuItem)
+	menuItemsLock     sync.RWMutex
 
-	currentID             = uint32(0)
-	quitOnce              sync.Once
-	dClickTimeMinInterval int64 = 500
+	currentID atomic.Uint32
+	quitOnce  sync.Once
 )
+
+// This helper function allows us to call systrayExit only once,
+// without accidentally calling it twice in the same lifetime.
+func runSystrayExit() {
+	if !systrayExitCalled {
+		systrayExitCalled = true
+		systrayExit()
+	}
+}
 
 func init() {
 	runtime.LockOSThread()
-}
-
-type IMenu interface {
-	ShowMenu() error
 }
 
 // MenuItem is used to keep track each menu item of systray.
 // Don't create it directly, use the one systray.AddMenuItem() returned
 type MenuItem struct {
 	// ClickedCh is the channel which will be notified when the menu item is clicked
-	click func()
+	ClickedCh chan struct{}
 
 	// id uniquely identify a menu item, not supposed to be modified
 	id uint32
@@ -40,8 +45,6 @@ type MenuItem struct {
 	title string
 	// tooltip is the text shown when pointing to menu item
 	tooltip string
-	// shortcutKey Menu shortcut key
-	shortcutKey string
 	// disabled menu item is grayed out and has no effect when clicked
 	disabled bool
 	// checked menu item has a tick before the title
@@ -50,10 +53,6 @@ type MenuItem struct {
 	isCheckable bool
 	// parent item, for sub menus
 	parent *MenuItem
-}
-
-func (item *MenuItem) Click(fn func()) {
-	item.click = fn
 }
 
 func (item *MenuItem) String() string {
@@ -66,10 +65,10 @@ func (item *MenuItem) String() string {
 // newMenuItem returns a populated MenuItem object
 func newMenuItem(title string, tooltip string, parent *MenuItem) *MenuItem {
 	return &MenuItem{
-		id:          atomic.AddUint32(&currentID, 1),
+		ClickedCh:   make(chan struct{}),
+		id:          currentID.Add(1),
 		title:       title,
 		tooltip:     tooltip,
-		shortcutKey: "",
 		disabled:    false,
 		checked:     false,
 		isCheckable: false,
@@ -84,30 +83,6 @@ func Run(onReady, onExit func()) {
 	Register(onReady, onExit)
 
 	nativeLoop()
-}
-
-//设置鼠标左键双击事件的时间间隔 默认500毫秒
-func SetDClickTimeMinInterval(value int64) {
-	dClickTimeMinInterval = value
-}
-
-//设置托盘鼠标左键点击事件
-func SetOnClick(fn func(menu IMenu)) {
-	setOnClick(fn)
-}
-
-//设置托盘鼠标左键双击事件
-func SetOnDClick(fn func(menu IMenu)) {
-	setOnDClick(fn)
-}
-
-//设置托盘鼠标右键事件反馈回调
-//支持windows 和 macosx，不支持linux
-//设置事件，菜单默认将不展示，通过menu.ShowMenu()函数显示
-//未设置事件，默认右键显示托盘菜单
-//macosx ShowMenu()只支持OnRClick函数内调用
-func SetOnRClick(fn func(menu IMenu)) {
-	setOnRClick(fn)
 }
 
 // RunWithExternalLoop allows the systemtray module to operate with other tookits.
@@ -128,16 +103,15 @@ func RunWithExternalLoop(onReady, onExit func()) (start, end func()) {
 // this does exactly the same as Run().
 func Register(onReady func(), onExit func()) {
 	if onReady == nil {
-		systrayReady = nil
+		systrayReady = func() {}
 	} else {
-		var readyCh = make(chan interface{})
 		// Run onReady on separate goroutine to avoid blocking event loop
+		readyCh := make(chan interface{})
 		go func() {
 			<-readyCh
 			onReady()
 		}()
 		systrayReady = func() {
-			systrayReady = nil
 			close(readyCh)
 		}
 	}
@@ -147,11 +121,20 @@ func Register(onReady func(), onExit func()) {
 		onExit = func() {}
 	}
 	systrayExit = onExit
+	systrayExitCalled = false
 	registerSystray()
 }
 
 // ResetMenu will remove all menu items
 func ResetMenu() {
+	menuItemsLock.Lock()
+	id := currentID.Load()
+	menuItemsLock.Unlock()
+	for i, item := range menuItems {
+		if i < id {
+			item.Remove()
+		}
+	}
 	resetMenu()
 }
 
@@ -170,8 +153,8 @@ func AddMenuItem(title string, tooltip string) *MenuItem {
 }
 
 // AddMenuItemCheckbox adds a menu item with the designated title and tooltip and a checkbox for Linux.
+// On other platforms there will be a check indicated next to the item if `checked` is true.
 // It can be safely invoked from different goroutines.
-// On Windows and OSX this is the same as calling AddMenuItem
 func AddMenuItemCheckbox(title string, tooltip string, checked bool) *MenuItem {
 	item := newMenuItem(title, tooltip, nil)
 	item.isCheckable = true
@@ -182,7 +165,12 @@ func AddMenuItemCheckbox(title string, tooltip string, checked bool) *MenuItem {
 
 // AddSeparator adds a separator bar to the menu
 func AddSeparator() {
-	addSeparator(atomic.AddUint32(&currentID, 1))
+	addSeparator(currentID.Add(1), 0)
+}
+
+// AddSeparator adds a separator bar to the submenu
+func (item *MenuItem) AddSeparator() {
+	addSeparator(currentID.Add(1), item.id)
 }
 
 // AddSubMenuItem adds a nested sub-menu item with the designated title and tooltip.
@@ -239,6 +227,19 @@ func (item *MenuItem) Hide() {
 	hideMenuItem(item)
 }
 
+// Remove removes a menu item
+func (item *MenuItem) Remove() {
+	removeMenuItem(item)
+	menuItemsLock.Lock()
+	delete(menuItems, item.id)
+	select {
+	case <-item.ClickedCh:
+	default:
+	}
+	close(item.ClickedCh)
+	menuItemsLock.Unlock()
+}
+
 // Show shows a previously hidden menu item
 func (item *MenuItem) Show() {
 	showMenuItem(item)
@@ -277,7 +278,9 @@ func systrayMenuItemSelected(id uint32) {
 		log.Printf("systray error: no menu item with ID %d\n", id)
 		return
 	}
-	if item.click != nil {
-		item.click()
+	select {
+	case item.ClickedCh <- struct{}{}:
+	// in case no one waiting for the channel
+	default:
 	}
 }

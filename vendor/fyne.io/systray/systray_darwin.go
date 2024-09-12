@@ -1,3 +1,5 @@
+//go:build !ios
+
 package systray
 
 /*
@@ -12,19 +14,8 @@ void setInternalLoop(bool);
 import "C"
 
 import (
-	"time"
 	"unsafe"
 )
-
-var st = &systray{}
-
-type systray struct {
-}
-
-func (m *systray) ShowMenu() error {
-	C.show_menu()
-	return nil
-}
 
 // SetTemplateIcon sets the systray icon as a template icon (on Mac), falling back
 // to a regular icon on other platforms.
@@ -75,45 +66,6 @@ func setInternalLoop(internal bool) {
 	C.setInternalLoop(C.bool(internal))
 }
 
-var (
-	onClick         func(menu IMenu)
-	onDClick        func(menu IMenu)
-	onRClick        func(menu IMenu)
-	dClickTime      int64
-	isEnableOnClick = false
-)
-
-func setOnClick(fn func(menu IMenu)) {
-	enableOnClick()
-	onClick = fn
-}
-
-func setOnDClick(fn func(menu IMenu)) {
-	enableOnClick()
-	onDClick = fn
-}
-
-func setOnRClick(fn func(menu IMenu)) {
-	enableOnClick()
-	onRClick = fn
-}
-
-// CreateMenu 创建托盘菜单, 如果托盘菜单是空, 把菜单项添加到托盘
-// 该方法主动调用后 如果托盘菜单已创建则添加进去, 之后鼠标事件失效
-//
-// 仅MacOSX平台
-func CreateMenu() {
-	createMenu()
-}
-
-// SetMenuNil 托盘菜单设置为nil, 如果托盘菜单不是空, 把菜单项设置为nil
-// 该方法主动调用后 将移除托盘菜单, 之后鼠标事件生效
-//
-// 仅MacOSX平台
-func SetMenuNil() {
-	setMenuNil()
-}
-
 // SetIcon sets the systray icon.
 // iconBytes should be the content of .ico for windows and .ico/.jpg/.png
 // for other platforms.
@@ -155,15 +107,14 @@ func addOrUpdateMenuItem(item *MenuItem) {
 		C.int(parentID),
 		C.CString(item.title),
 		C.CString(item.tooltip),
-		C.CString(item.shortcutKey),
 		disabled,
 		checked,
 		isCheckable,
 	)
 }
 
-func addSeparator(id uint32) {
-	C.add_separator(C.int(id))
+func addSeparator(id uint32, parent uint32) {
+	C.add_separator(C.int(id), C.int(parent))
 }
 
 func hideMenuItem(item *MenuItem) {
@@ -178,67 +129,27 @@ func showMenuItem(item *MenuItem) {
 	)
 }
 
+func removeMenuItem(item *MenuItem) {
+	C.remove_menu_item(
+		C.int(item.id),
+	)
+}
+
 func resetMenu() {
 	C.reset_menu()
 }
 
-func createMenu() {
-	C.create_menu()
-}
-
-func setMenuNil() {
-	C.set_menu_nil()
-}
-func enableOnClick() {
-	if !isEnableOnClick {
-		isEnableOnClick = true
-		C.enable_on_click()
-	}
-}
-
 //export systray_ready
 func systray_ready() {
-	if systrayReady != nil {
-		systrayReady()
-	}
+	systrayReady()
 }
 
 //export systray_on_exit
 func systray_on_exit() {
-	systrayExit()
+	runSystrayExit()
 }
 
 //export systray_menu_item_selected
 func systray_menu_item_selected(cID C.int) {
 	systrayMenuItemSelected(uint32(cID))
-}
-
-//export systray_on_click
-func systray_on_click() {
-	if dClickTime == 0 {
-		dClickTime = time.Now().UnixMilli()
-	} else {
-		nowMilli := time.Now().UnixMilli()
-		if nowMilli-dClickTime < dClickTimeMinInterval {
-			dClickTime = dClickTimeMinInterval
-			if onDClick != nil {
-				onDClick(st)
-				return
-			}
-		} else {
-			dClickTime = nowMilli
-		}
-	}
-	if onClick != nil {
-		onClick(st)
-	}
-}
-
-//export systray_on_rclick
-func systray_on_rclick() {
-	if onRClick != nil {
-		onRClick(st)
-	} else {
-		C.show_menu()
-	}
 }

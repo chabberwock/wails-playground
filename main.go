@@ -2,8 +2,8 @@ package main
 
 import (
 	"embed"
-	"github.com/energye/systray"
-	"github.com/energye/systray/icon"
+	"fyne.io/systray"
+	"fyne.io/systray/example/icon"
 	"log"
 	"net/http"
 	"wails-playground/internal/myapp"

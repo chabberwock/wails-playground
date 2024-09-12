@@ -1,3 +1,5 @@
+//go:build !ios
+
 #import <Cocoa/Cocoa.h>
 #include "systray.h"
 
@@ -13,22 +15,20 @@
 
 #endif
 
-@interface MenuItem : NSObject {
+@interface MenuItem : NSObject
+{
   @public
     NSNumber* menuId;
     NSNumber* parentMenuId;
     NSString* title;
     NSString* tooltip;
-    NSString* shortcutKey;
     short disabled;
     short checked;
 }
-
 -(id) initWithId: (int)theMenuId
 withParentMenuId: (int)theParentMenuId
        withTitle: (const char*)theTitle
      withTooltip: (const char*)theTooltip
- withShortcutKey: (const char*)theShortcutKey
     withDisabled: (short)theDisabled
      withChecked: (short)theChecked;
      @end
@@ -37,7 +37,6 @@ withParentMenuId: (int)theParentMenuId
      withParentMenuId: (int)theParentMenuId
             withTitle: (const char*)theTitle
           withTooltip: (const char*)theTooltip
-      withShortcutKey: (const char*)theShortcutKey
          withDisabled: (short)theDisabled
           withChecked: (short)theChecked
 {
@@ -56,11 +55,11 @@ withParentMenuId: (int)theParentMenuId
 @interface AppDelegate: NSObject <NSApplicationDelegate>
   - (void) add_or_update_menu_item:(MenuItem*) item;
   - (IBAction)menuHandler:(id)sender;
-  - (void)statusOnClick:(NSButton *)btn;
   @property (assign) IBOutlet NSWindow *window;
   @end
 
-@implementation AppDelegate {
+  @implementation AppDelegate
+{
   NSStatusItem *statusItem;
   NSMenu *menu;
   NSCondition* cond;
@@ -68,18 +67,17 @@ withParentMenuId: (int)theParentMenuId
 
 @synthesize window = _window;
 
-- (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
+- (void)applicationDidFinishLaunching:(NSNotification *)aNotification
+{
   self->statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
   self->menu = [[NSMenu alloc] init];
   [self->menu setAutoenablesItems: FALSE];
-  //[self->statusItem.button setTarget:self];
-  //[self->menu setDelegate:(AppDelegate *)self];
-  //[self->statusItem.button setAction:@selector(statusOnClick:)];
-  //[self->statusItem setMenu:self->menu]; //注释掉，不然不设置菜单事件也不启作用
+  [self->statusItem setMenu:self->menu];
   systray_ready();
 }
 
-- (void)applicationWillTerminate:(NSNotification *)aNotification {
+- (void)applicationWillTerminate:(NSNotification *)aNotification
+{
   systray_on_exit();
 }
 
@@ -110,7 +108,8 @@ withParentMenuId: (int)theParentMenuId
   statusItem.button.toolTip = tooltip;
 }
 
-- (IBAction)menuHandler:(id)sender {
+- (IBAction)menuHandler:(id)sender
+{
   NSNumber* menuId = [sender representedObject];
   systray_menu_item_selected(menuId.intValue);
 }
@@ -118,7 +117,6 @@ withParentMenuId: (int)theParentMenuId
 - (void)add_or_update_menu_item:(MenuItem *)item {
   NSMenu *theMenu = self->menu;
   NSMenuItem *parentItem;
-  //create_menu();
   if ([item->parentMenuId integerValue] > 0) {
     parentItem = find_menu_item(menu, item->parentMenuId);
     if (parentItem.hasSubmenu) {
@@ -132,9 +130,10 @@ withParentMenuId: (int)theParentMenuId
   
   NSMenuItem *menuItem;
   menuItem = find_menu_item(theMenu, item->menuId);
-  //item->shortcutKey
   if (menuItem == NULL) {
-    menuItem = [theMenu addItemWithTitle:item->title action:@selector(menuHandler:) keyEquivalent:@""];
+    menuItem = [theMenu addItemWithTitle:item->title
+                               action:@selector(menuHandler:)
+                        keyEquivalent:@""];
     [menuItem setRepresentedObject:item->menuId];
   }
   [menuItem setTitle:item->title];
@@ -173,11 +172,20 @@ NSMenuItem *find_menu_item(NSMenu *ourMenu, NSNumber *menuId) {
   return NULL;
 };
 
-- (void) add_separator:(NSNumber*) menuId {
+- (void) add_separator:(NSNumber*) parentMenuId
+{
+  if (parentMenuId.integerValue != 0) {
+    NSMenuItem* menuItem = find_menu_item(menu, parentMenuId);
+    if (menuItem != NULL) {
+      [menuItem.submenu addItem: [NSMenuItem separatorItem]];
+      return;
+    }
+  }
   [menu addItem: [NSMenuItem separatorItem]];
 }
 
-- (void) hide_menu_item:(NSNumber*) menuId {
+- (void) hide_menu_item:(NSNumber*) menuId
+{
   NSMenuItem* menuItem = find_menu_item(menu, menuId);
   if (menuItem != NULL) {
     [menuItem setHidden:TRUE];
@@ -196,51 +204,30 @@ NSMenuItem *find_menu_item(NSMenu *ourMenu, NSNumber *menuId) {
   menuItem.image = image;
 }
 
-- (void) show_menu_item:(NSNumber*) menuId {
+- (void) show_menu_item:(NSNumber*) menuId
+{
   NSMenuItem* menuItem = find_menu_item(menu, menuId);
   if (menuItem != NULL) {
     [menuItem setHidden:FALSE];
   }
 }
 
-- (void) create_menu {
-  if(statusItem.menu == NULL){
-    [statusItem setMenu:menu];
+- (void) remove_menu_item:(NSNumber*) menuId
+{
+  NSMenuItem* menuItem = find_menu_item(menu, menuId);
+  if (menuItem != NULL) {
+    [menuItem.menu removeItem:menuItem];     
   }
 }
 
-- (void) set_menu_nil {
-  if(statusItem.menu != NULL){
-    [statusItem setMenu:NULL];
-  }
-}
-
-- (void) reset_menu {
+- (void) reset_menu
+{
   [self->menu removeAllItems];
 }
 
-- (void) quit {
+- (void) quit
+{
   [NSApp terminate:self];
-}
-
-- (void) statusOnClick:(NSButton *)btn {
-    NSEvent *event = [NSApp currentEvent];
-    if(event.type == NSEventTypeLeftMouseUp){
-        systray_on_click();
-    }else if(event.type == NSEventTypeRightMouseUp){
-        systray_on_rclick();
-    }
-}
-
-- (void) show_menu {
-    create_menu();
-    [statusItem.button performClick:nil];
-    set_menu_nil();
-}
-
-- (void) enable_on_click {
-  [statusItem.button setAction:@selector(statusOnClick:)];
-  [statusItem.button sendActionOn:(NSEventMaskLeftMouseUp|NSEventMaskRightMouseUp)];
 }
 
 @end
@@ -256,6 +243,7 @@ void registerSystray(void) {
   if (!internalLoop) { // with an external loop we don't take ownership of the app
     return;
   }
+
   owner = [[AppDelegate alloc] init];
   [[NSApplication sharedApplication] setDelegate:owner];
 
@@ -280,10 +268,9 @@ int nativeLoop(void) {
 
 void nativeStart(void) {
   owner = [[AppDelegate alloc] init];
-  NSNotification *launched = [NSNotification
-                                  notificationWithName: NSApplicationDidFinishLaunchingNotification
-                                                object: [NSApplication sharedApplication]];
-  [[NSApplication sharedApplication] setDelegate:owner];
+
+  NSNotification *launched = [NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification
+                                                        object:[NSApplication sharedApplication]];
   [owner applicationDidFinishLaunching:launched];
 }
 
@@ -296,19 +283,23 @@ void runInMainThread(SEL method, id object) {
 
 void setIcon(const char* iconBytes, int length, bool template) {
   NSData* buffer = [NSData dataWithBytes: iconBytes length:length];
-  NSImage *image = [[NSImage alloc] initWithData:buffer];
-  [image setSize:NSMakeSize(16, 16)];
-  image.template = template;
-  runInMainThread(@selector(setIcon:), (id)image);
+  @autoreleasepool {
+    NSImage *image = [[NSImage alloc] initWithData:buffer];
+    [image setSize:NSMakeSize(16, 16)];
+    image.template = template;
+    runInMainThread(@selector(setIcon:), (id)image);
+  }
 }
 
 void setMenuItemIcon(const char* iconBytes, int length, int menuId, bool template) {
   NSData* buffer = [NSData dataWithBytes: iconBytes length:length];
-  NSImage *image = [[NSImage alloc] initWithData:buffer];
-  [image setSize:NSMakeSize(16, 16)];
-  image.template = template;
-  NSNumber *mId = [NSNumber numberWithInt:menuId];
-  runInMainThread(@selector(setMenuItemIcon:), @[image, (id)mId]);
+  @autoreleasepool {
+    NSImage *image = [[NSImage alloc] initWithData:buffer];
+    [image setSize:NSMakeSize(16, 16)];
+    image.template = template;
+    NSNumber *mId = [NSNumber numberWithInt:menuId];
+    runInMainThread(@selector(setMenuItemIcon:), @[image, (id)mId]);
+  }
 }
 
 void setTitle(char* ctitle) {
@@ -325,21 +316,26 @@ void setTooltip(char* ctooltip) {
   runInMainThread(@selector(setTooltip:), (id)tooltip);
 }
 
-void add_or_update_menu_item(int menuId, int parentMenuId, char* title, char* tooltip, char* shortcutKey, short disabled, short checked, short isCheckable) {
-  MenuItem* item = [[MenuItem alloc] initWithId: menuId withParentMenuId: parentMenuId withTitle: title withTooltip: tooltip withShortcutKey: shortcutKey withDisabled: disabled withChecked: checked];
+void add_or_update_menu_item(int menuId, int parentMenuId, char* title, char* tooltip, short disabled, short checked, short isCheckable) {
+  MenuItem* item = [[MenuItem alloc] initWithId: menuId withParentMenuId: parentMenuId withTitle: title withTooltip: tooltip withDisabled: disabled withChecked: checked];
   free(title);
   free(tooltip);
   runInMainThread(@selector(add_or_update_menu_item:), (id)item);
 }
 
-void add_separator(int menuId) {
-  NSNumber *mId = [NSNumber numberWithInt:menuId];
-  runInMainThread(@selector(add_separator:), (id)mId);
+void add_separator(int menuId, int parentId) {
+  NSNumber *pId = [NSNumber numberWithInt:parentId];
+  runInMainThread(@selector(add_separator:), (id)pId);
 }
 
 void hide_menu_item(int menuId) {
   NSNumber *mId = [NSNumber numberWithInt:menuId];
   runInMainThread(@selector(hide_menu_item:), (id)mId);
+}
+
+void remove_menu_item(int menuId) {
+  NSNumber *mId = [NSNumber numberWithInt:menuId];
+  runInMainThread(@selector(remove_menu_item:), (id)mId);
 }
 
 void show_menu_item(int menuId) {
@@ -349,22 +345,6 @@ void show_menu_item(int menuId) {
 
 void reset_menu() {
   runInMainThread(@selector(reset_menu), nil);
-}
-
-void create_menu() {
-  runInMainThread(@selector(create_menu), nil);
-}
-
-void set_menu_nil() {
-  runInMainThread(@selector(set_menu_nil), nil);
-}
-
-void show_menu(){
-  runInMainThread(@selector(show_menu), nil);
-}
-
-void enable_on_click(void) {
-  runInMainThread(@selector(enable_on_click), nil);
 }
 
 void quit() {
