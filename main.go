@@ -6,8 +6,6 @@ import (
 	"fyne.io/systray/example/icon"
 	"log"
 	"net/http"
-	"time"
-	"wails-playground/internal/myapp"
 )
 
 //go:embed all:frontend/dist
@@ -25,9 +23,9 @@ func main() {
 	go systray.Run(onReady, onExit)
 
 	// Create an instance of the app structure
-	app := myapp.NewApp()
-	app.Greet("1")
-	// Create application with options
+	//app := myapp.NewApp()
+	//
+	//// Create application with options
 	//err := wails.Run(&options.App{
 	//	Title:  "wails-playground",
 	//	Width:  1024,
@@ -42,11 +40,7 @@ func main() {
 	//		app,
 	//	},
 	//})
-
-	for {
-		time.Sleep(time.Second)
-	}
-
+	//
 	//if err != nil {
 	//	println("Error:", err.Error())
 	//}
