@@ -6,6 +6,7 @@ import (
 	"fyne.io/systray/example/icon"
 	"log"
 	"net/http"
+	"time"
 	"wails-playground/internal/myapp"
 
 	"github.com/wailsapp/wails/v2"
@@ -26,6 +27,7 @@ func (m *MyLoader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	go systray.Run(onReady, onExit)
+	time.Sleep(5 * time.Second)
 
 	// Create an instance of the app structure
 	app := myapp.NewApp()
@@ -60,10 +62,10 @@ func onReady() {
 	systray.SetIcon(icon.Data)
 	systray.SetTitle("Awesome App")
 	systray.SetTooltip("Pretty awesome")
-	//mQuit := systray.AddMenuItem("Quit", "Quit the whole app")
+	mQuit := systray.AddMenuItem("Quit", "Quit the whole app")
 
 	systray.AddSeparator()
 	systray.AddMenuItemCheckbox("test", "tooltip her", true)
 	// Sets the icon of a menu item. Only available on Mac and Windows.
-	//mQuit.SetIcon(icon.Data)
+	mQuit.SetIcon(icon.Data)
 }
