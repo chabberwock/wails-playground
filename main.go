@@ -2,8 +2,10 @@ package main
 
 import (
 	"embed"
-	"log"
-	"net/http"
+	"fmt"
+	"os"
+	"path"
+	"wails-playground/internal/module"
 	"wails-playground/internal/myapp"
 
 	"github.com/wailsapp/wails/v2"
@@ -14,27 +16,26 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-type MyLoader struct {
-}
-
-func (m *MyLoader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Println("handling " + r.URL.Path)
-	w.Write([]byte("//hello world I am " + r.URL.Path))
-}
-
 func main() {
-
 	// Create an instance of the app structure
 	app := myapp.NewApp()
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	loader := module.NewLoader(path.Dir(exe), "/module")
 
 	// Create application with options
-	err := wails.Run(&options.App{
-		Title:  "wails-playground",
-		Width:  1024,
-		Height: 768,
+	errWails := wails.Run(&options.App{
+		Title:             "wails-playground",
+		Width:             1024,
+		Height:            768,
+		HideWindowOnClose: true,
+		StartHidden:       true,
 		AssetServer: &assetserver.Options{
 			Assets:  assets,
-			Handler: new(MyLoader),
+			Handler: loader,
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		OnStartup:        app.Startup,
@@ -43,7 +44,7 @@ func main() {
 		},
 	})
 
-	if err != nil {
+	if errWails != nil {
 		println("Error:", err.Error())
 	}
 
