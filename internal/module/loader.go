@@ -31,6 +31,9 @@ func (m *Loader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
 		return
 	}
+	if strings.HasSuffix(r.URL.Path, ".js") {
+		w.Header().Set("Content-Type", "application/javascript")
+	}
 	if _, err := w.Write(bytes); err != nil {
 		log.Printf("failed to send file %s: %s", r.URL.Path, err)
 	}
