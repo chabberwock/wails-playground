@@ -3,6 +3,8 @@ package myapp
 import (
 	"context"
 	"fmt"
+	"fyne.io/systray"
+	"fyne.io/systray/example/icon"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"log"
 	"time"
@@ -22,6 +24,24 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
+	systray.Run(onReady, onExit)
+
+}
+
+func onExit() {
+
+}
+
+func onReady() {
+	systray.SetIcon(icon.Data)
+	systray.SetTitle("Awesome App")
+	systray.SetTooltip("Pretty awesome")
+	mQuit := systray.AddMenuItem("Quit", "Quit the whole app")
+
+	systray.AddSeparator()
+	systray.AddMenuItemCheckbox("test", "tooltip her", true)
+	// Sets the icon of a menu item. Only available on Mac and Windows.
+	mQuit.SetIcon(icon.Data)
 }
 
 // Greet returns a greeting for the given name
