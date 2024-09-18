@@ -5,15 +5,3 @@
 export function Greet(arg1) {
   return window['go']['myapp']['App']['Greet'](arg1);
 }
-
-export function MyChan(arg1) {
-  return window['go']['myapp']['App']['MyChan'](arg1);
-}
-
-export function MyFunc(arg1) {
-  return window['go']['myapp']['App']['MyFunc'](arg1);
-}
-
-export function SuperFunc2() {
-  return window['go']['myapp']['App']['SuperFunc2']();
-}
