@@ -76,12 +76,32 @@ withParentMenuId: (int)theParentMenuId
   self->menu.delegate = self;
   self->menu.autoenablesItems = FALSE;
   self->statusItem.menu = self->menu;
+  // Once the user has removed it, the item needs to be explicitly brought back,
+  // even restarting the application is insufficient.
+  // Since the interface from Go is relatively simple, for now we ensure it's
+  // always visible at application startup.
+  self->statusItem.visible = TRUE;
   systray_ready();
 }
 
 - (void)applicationWillTerminate:(NSNotification *)aNotification
 {
   systray_on_exit();
+}
+
+- (void)setRemovalAllowed {
+  NSStatusItemBehavior behavior = [self->statusItem behavior];
+  behavior |= NSStatusItemBehaviorRemovalAllowed;
+  self->statusItem.behavior = behavior;
+}
+
+- (void)setRemovalForbidden {
+  NSStatusItemBehavior behavior = [self->statusItem behavior];
+  behavior &= ~NSStatusItemBehaviorRemovalAllowed;
+  // Ensure the menu item is visible if it was removed, since we're now
+  // disallowing removal.
+  self->statusItem.visible = TRUE;
+  self->statusItem.behavior = behavior;
 }
 
 - (void)setIcon:(NSImage *)image {
@@ -233,7 +253,21 @@ NSMenuItem *find_menu_item(NSMenu *ourMenu, NSNumber *menuId) {
 
 - (void) quit
 {
-  [NSApp terminate:self];
+  // This tells the app event loop to stop after processing remaining messages.
+  [NSApp stop:self];
+  // The event loop won't return until it processes another event.
+  // https://stackoverflow.com/a/48064752/149482
+  NSPoint eventLocation = NSMakePoint(0, 0);
+  NSEvent *customEvent = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
+                                            location:eventLocation
+                                       modifierFlags:0
+                                           timestamp:0
+                                        windowNumber:0
+                                             context:nil
+                                             subtype:0
+                                               data1:0
+                                               data2:0];
+  [NSApp postEvent:customEvent atStart:NO];
 }
 
 @end
@@ -320,6 +354,14 @@ void setTooltip(char* ctooltip) {
                                                encoding:NSUTF8StringEncoding];
   free(ctooltip);
   runInMainThread(@selector(setTooltip:), (id)tooltip);
+}
+
+void setRemovalAllowed(bool allowed) {
+  if (allowed) {
+    runInMainThread(@selector(setRemovalAllowed), nil);
+  } else {
+    runInMainThread(@selector(setRemovalForbidden), nil);
+  }
 }
 
 void add_or_update_menu_item(int menuId, int parentMenuId, char* title, char* tooltip, short disabled, short checked, short isCheckable) {
