@@ -26,8 +26,10 @@ func (m *MyLoader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	go systray.Run(onReady, onExit)
-	time.Sleep(5 * time.Second)
+	go func() {
+		time.Sleep(10 * time.Second)
+		systray.Run(onReady, onExit)
+	}()
 
 	// Create an instance of the app structure
 	app := myapp.NewApp()
