@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import logo from './assets/images/logo-universal.png';
 import './App.css';
-import { Greet } from '../wailsjs/go/myapp/App';
+import {Greet, Modules} from '../wailsjs/go/myapp/App';
 
 function App() {
   const [resultText, setResultText] = useState(
@@ -18,10 +18,14 @@ function App() {
   useEffect(() => {
     // В режиме dev вот так ../../modules/dist1/main работает, компонент из папки подгружается,
     // а в сбилденном виде все падает. Я так и не разобрался как правильно прописать путь.
-    let modpath = '/modules/module1/main.js';
-    import(modpath).then((module) => {
-      setRemote(() => window.default);
-    });
+    Modules().then(function(modules) {
+      console.log(modules);
+      for (let i=0;i<modules.length;i++) {
+        import(/* @vite-ignore */ modules[i].path).then((module) => {
+          setRemote(() => window.default);
+        });
+      }
+    })
   }, []);
 
   return (

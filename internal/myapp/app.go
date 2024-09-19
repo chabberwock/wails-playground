@@ -6,16 +6,21 @@ import (
 	"fyne.io/systray"
 	"fyne.io/systray/example/icon"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"log"
+	"wails-playground/internal/module"
 )
 
 // App struct
 type App struct {
-	ctx context.Context
+	ctx    context.Context
+	loader *module.Loader
 }
 
 // NewApp creates a new App application struct
-func NewApp() *App {
-	return &App{}
+func NewApp(loader *module.Loader) *App {
+	return &App{
+		loader: loader,
+	}
 }
 
 // Startup is called when the app starts. The context is saved
@@ -44,4 +49,18 @@ func onReady() {
 // Greet returns a greeting for the given name
 func (a *App) Greet(name string) string {
 	return fmt.Sprintf("Hello %s, It's show time!", name)
+}
+
+type JSModuleResponse struct {
+	Path  string `json:"path"`
+	Title string `json:"title"`
+}
+
+func (a *App) Modules() []module.JSModule {
+	list, err := a.loader.List()
+	if err != nil {
+		log.Printf("failed to list modules: %s", err)
+		return nil
+	}
+	return list
 }

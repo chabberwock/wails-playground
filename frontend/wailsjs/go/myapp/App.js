@@ -5,3 +5,7 @@
 export function Greet(arg1) {
   return window['go']['myapp']['App']['Greet'](arg1);
 }
+
+export function Modules() {
+  return window['go']['myapp']['App']['Modules']();
+}

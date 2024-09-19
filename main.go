@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"wails-playground/internal/module"
 	"wails-playground/internal/myapp"
 
@@ -18,13 +19,20 @@ var assets embed.FS
 
 func main() {
 	// Create an instance of the app structure
-	app := myapp.NewApp()
 	exe, err := os.Executable()
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	loader := module.NewLoader(path.Dir(exe), "/module")
+
+	modPath, err := filepath.Abs(path.Dir(exe) + "/modules")
+	if err != nil {
+		fmt.Printf("failed to resolve module path: %s", err)
+		os.Exit(1)
+	}
+	loader := module.NewLoader(modPath, "/modules")
+
+	app := myapp.NewApp(loader)
 
 	// Create application with options
 	errWails := wails.Run(&options.App{
