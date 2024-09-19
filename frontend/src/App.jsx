@@ -18,7 +18,8 @@ function App() {
   useEffect(() => {
     // В режиме dev вот так ../../modules/dist1/main работает, компонент из папки подгружается,
     // а в сбилденном виде все падает. Я так и не разобрался как правильно прописать путь.
-    import('../../modules/module1/main').then((module) => {
+    let modpath = '/modules/module1/main.js';
+    import(modpath).then((module) => {
       setRemote(() => window.default);
     });
   }, []);
